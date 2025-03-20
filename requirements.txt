@@ -1,3 +1,4 @@
 gitpython>=3.1.30
 tqdm>=4.65.0
 aiofiles>=23.1.0
+con-duct
