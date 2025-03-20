@@ -76,9 +76,12 @@ export -f process_repo
 export PYTHON_SCRIPT
 
 # Find all .git directories and prepare commands for parallel execution
+INPUT_DIR="${INPUT_DIR%/}"
+INPUT_DIR_BASE=$(dirname "${INPUT_DIR}")
 find "$INPUT_DIR" -name ".git" -type d | while read -r git_dir; do
     # Get relative path from INPUT_DIR
-    rel_path="${git_dir#$INPUT_DIR/}"
+    rel_path="${git_dir#$INPUT_DIR_BASE/}"
+    #rel_path=$(echo "$git_dir" | sed "s|^$INPUT_DIR||")
     rel_path="${rel_path%.git}"
     rel_path="${rel_path%/}"
     
