@@ -1,0 +1,92 @@
+#!/bin/bash
+
+# Default parameters
+JOBS=5
+INPUT_DIR=""
+OUTPUT_DIR=""
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --jobs=*)
+            JOBS="${1#*=}"
+            shift
+            ;;
+        --jobs)
+            JOBS="$2"
+            shift 2
+            ;;
+        *)
+            if [[ -z "$INPUT_DIR" ]]; then
+                INPUT_DIR="$1"
+            elif [[ -z "$OUTPUT_DIR" ]]; then
+                OUTPUT_DIR="$1"
+            else
+                echo "Error: Too many arguments"
+                echo "Usage: $0 [--jobs=N] INPUT_DIR OUTPUT_DIR"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Check if required arguments are provided
+if [[ -z "$INPUT_DIR" || -z "$OUTPUT_DIR" ]]; then
+    echo "Error: Both INPUT_DIR and OUTPUT_DIR are required"
+    echo "Usage: $0 [--jobs=N] INPUT_DIR OUTPUT_DIR"
+    exit 1
+fi
+
+# Check if GNU parallel is installed
+if ! command -v parallel &> /dev/null; then
+    echo "Error: GNU parallel is not installed. Please install it first."
+    exit 1
+fi
+
+# Check if the Python script exists
+SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+PYTHON_SCRIPT="$SCRIPT_DIR/git-annex-log-stats.py"
+
+if [[ ! -f "$PYTHON_SCRIPT" ]]; then
+    echo "Error: Python script not found at $PYTHON_SCRIPT"
+    exit 1
+fi
+
+# Create output directory if it doesn't exist
+mkdir -p "$OUTPUT_DIR"
+
+# Function to process a git repository
+process_repo() {
+    local git_dir="$1"
+    local output_file="$2"
+    
+    # Create output directory structure
+    mkdir -p "$(dirname "$output_file")"
+    
+    echo "Processing: $git_dir -> $output_file"
+    
+    # Run the Python script
+    python3 "$PYTHON_SCRIPT" "$(dirname "$git_dir")" "$output_file"
+    
+    echo "Completed: $git_dir -> $output_file"
+}
+
+export -f process_repo
+export PYTHON_SCRIPT
+
+# Find all .git directories and prepare commands for parallel execution
+find "$INPUT_DIR" -name ".git" -type d | while read -r git_dir; do
+    # Get relative path from INPUT_DIR
+    rel_path="${git_dir#$INPUT_DIR/}"
+    rel_path="${rel_path%.git}"
+    rel_path="${rel_path%/}"
+    
+    # Create output file path
+    output_file="$OUTPUT_DIR/$rel_path.json"
+    
+    # Add to the command list
+    echo "$git_dir" "$output_file"
+done | parallel --colsep ' ' --jobs "$JOBS" process_repo {1} {2}
+
+echo "All repositories processed successfully!"
