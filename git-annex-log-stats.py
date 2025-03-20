@@ -55,7 +55,8 @@ async def get_annex_size_async(repo_path, commit, has_annex):
             print(f"Error retrieving annex size for commit {commit}: {stderr.decode()}")
             return 0
         annex_info = json.loads(stdout.decode())
-        return int(annex_info.get('size of annexed files in tree', 0))
+        # could be "size of annexed files in tree": "819104023 (+ 7 unknown size)"
+        return int(annex_info.get('size of annexed files in tree', "0").split()[0])
     except Exception as e:
         print(f"Error retrieving annex size for commit {commit} using {' '.join(cmd)} : {e}")
         return 0

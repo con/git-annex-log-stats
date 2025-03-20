@@ -90,6 +90,6 @@ find "$INPUT_DIR" -name ".git" -type d | while read -r git_dir; do
     
     # Add to the command list
     echo "$git_dir" "$output_file"
-done | parallel --env _ --colsep ' ' --jobs "$JOBS" process_repo {1} {2}
+done | parallel --env PATH --colsep ' ' --jobs "$JOBS" process_repo {1} {2}
 
 echo "All repositories processed successfully!"
