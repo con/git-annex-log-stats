@@ -9,54 +9,71 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
 import humanize
+import itertools
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Generate size plots from git-annex JSON statistics files')
-    parser.add_argument('input_pattern', help='Glob pattern for input JSON files (e.g., "stats/*.json")')
+    
+    # Group arguments
+    parser.add_argument('--group', action='append', nargs='+', metavar=('NAME', 'PATTERN'), 
+                        help='Define a group with name and one or more glob patterns')
+    
+    # If no groups are defined, use a single pattern
+    parser.add_argument('input_pattern', nargs='?', help='Glob pattern for input JSON files (if no groups defined)')
+    
+    # Output and formatting options
     parser.add_argument('--output', '-o', default='size_history.png', help='Output plot filename')
     parser.add_argument('--title', '-t', default='Git and Git-Annex Size History', help='Plot title')
     parser.add_argument('--log-scale', '-l', action='store_true', help='Use logarithmic scale for size axis')
-    return parser.parse_args()
+    parser.add_argument('--separate-components', '-s', action='store_true', 
+                        help='Show git and git-annex sizes separately (default: total only)')
+    
+    args = parser.parse_args()
+    
+    # Validate arguments
+    if args.group is None and args.input_pattern is None:
+        parser.error("Either --group or input_pattern must be provided")
+    
+    return args
 
-def load_json_files(pattern):
-    """Load all JSON files matching the pattern."""
+def load_json_files(patterns):
+    """Load all JSON files matching the patterns."""
     all_data = []
-    for filename in glob.glob(pattern, recursive=True):
-        try:
-            with open(filename, 'r') as f:
-                data = json.load(f)
-                all_data.append(data)
-            print(f"Loaded {filename} with {len(data)} entries")
-        except Exception as e:
-            print(f"Error loading {filename}: {e}")
+    # Handle single pattern or list of patterns
+    if isinstance(patterns, str):
+        patterns = [patterns]
+    
+    for pattern in patterns:
+        for filename in glob.glob(pattern, recursive=True):
+            try:
+                with open(filename, 'r') as f:
+                    data = json.load(f)
+                    all_data.append(data)
+                print(f"Loaded {filename} with {len(data)} entries")
+            except Exception as e:
+                print(f"Error loading {filename}: {e}")
     return all_data
 
 def get_month_range(all_data):
     """Get the range of months from the earliest to the latest commit."""
     min_date = None
     max_date = None
-    
     for repo_data in all_data:
         for commit_hash, commit_data in repo_data.items():
             try:
                 timestamp = datetime.fromisoformat(commit_data['timestamp'])
-                
                 if min_date is None or timestamp < min_date:
                     min_date = timestamp
-                
                 if max_date is None or timestamp > max_date:
                     max_date = timestamp
             except Exception:
                 continue
-    
     if min_date is None or max_date is None:
         return []
-    
     # Generate list of all months in the range
     months = []
     current = datetime(min_date.year, min_date.month, 1)
     end = datetime(max_date.year, max_date.month, 1)
-    
     while current <= end:
         months.append(current.strftime('%Y-%m'))
         # Move to next month
@@ -64,7 +81,6 @@ def get_month_range(all_data):
             current = datetime(current.year + 1, 1, 1)
         else:
             current = datetime(current.year, current.month + 1, 1)
-    
     return months
 
 def aggregate_by_month(all_data):
@@ -73,10 +89,8 @@ def aggregate_by_month(all_data):
     all_months = get_month_range(all_data)
     if not all_months:
         return {}
-    
     # Initialize monthly totals
     monthly_totals = {month: {'git_size': 0, 'annex_size': 0, 'total_size': 0} for month in all_months}
-    
     # Process each repository
     for repo_data in all_data:
         # Convert repository data to chronological list
@@ -92,17 +106,14 @@ def aggregate_by_month(all_data):
                 })
             except Exception as e:
                 print(f"Error processing commit {commit_hash}: {e}")
-        
         # Sort by month
         repo_commits.sort(key=lambda x: x['month'])
-        
         # Find the largest total size for each month in this repo
         repo_monthly = {}
         for commit in repo_commits:
             month = commit['month']
             if month not in repo_monthly or commit['total_size'] > repo_monthly[month]['total_size']:
                 repo_monthly[month] = commit
-        
         # Carry forward values for missing months
         last_values = {'git_size': 0, 'annex_size': 0, 'total_size': 0}
         for month in all_months:
@@ -113,31 +124,64 @@ def aggregate_by_month(all_data):
                     'annex_size': repo_monthly[month]['annex_size'],
                     'total_size': repo_monthly[month]['total_size']
                 }
-            
             # Add to monthly totals (either new values or carried forward)
             monthly_totals[month]['git_size'] += last_values['git_size']
             monthly_totals[month]['annex_size'] += last_values['annex_size']
             monthly_totals[month]['total_size'] += last_values['total_size']
-    
     return monthly_totals
 
-def create_plot(monthly_data, output_filename, title, use_log_scale):
-    """Create a plot of the monthly data with humanized size labels."""
-    # Sort months chronologically
-    sorted_months = sorted(monthly_data.keys())
-    dates = [datetime.strptime(month, '%Y-%m') for month in sorted_months]
-    
-    # Extract size data
-    git_sizes = [monthly_data[month]['git_size'] for month in sorted_months]
-    annex_sizes = [monthly_data[month]['annex_size'] for month in sorted_months]
-    total_sizes = [monthly_data[month]['total_size'] for month in sorted_months]
-    
-    # Create plot
+def create_plot(group_data, output_filename, title, use_log_scale, show_components):
+    """Create a plot of the monthly data with humanized size labels for multiple groups."""
     plt.figure(figsize=(12, 8))
     
-    plt.plot(dates, git_sizes, 'b:', label='Git Objects', linewidth=2)
-    plt.plot(dates, annex_sizes, 'g--', label='Git-Annex Files', linewidth=2)
-    plt.plot(dates, total_sizes, 'r-', label='Total Size', linewidth=2)
+    # Define a color cycle for the groups
+    colors = plt.cm.tab10.colors
+    color_cycle = itertools.cycle(colors)
+    
+    # Define line styles
+    if show_components:
+        styles = {
+            'git_size': ':',      # dotted
+            'annex_size': '--',   # dashed
+            'total_size': '-'     # solid
+        }
+    else:
+        styles = {
+            'total_size': '-'     # solid only
+        }
+    
+    # Keep track of all dates for x-axis
+    all_dates = set()
+    
+    # Plot each group
+    for group_idx, (group_name, monthly_data) in enumerate(group_data.items()):
+        # Sort months chronologically
+        sorted_months = sorted(monthly_data.keys())
+        dates = [datetime.strptime(month, '%Y-%m') for month in sorted_months]
+        all_dates.update(dates)
+        
+        # Get the color for this group
+        group_color = next(color_cycle)
+        
+        # Plot the components based on user preference
+        if show_components:
+            # Extract and plot git size
+            git_sizes = [monthly_data[month]['git_size'] for month in sorted_months]
+            plt.plot(dates, git_sizes, 
+                     color=group_color, linestyle=styles['git_size'], 
+                     label=f'{group_name} - Git', linewidth=2)
+            
+            # Extract and plot annex size
+            annex_sizes = [monthly_data[month]['annex_size'] for month in sorted_months]
+            plt.plot(dates, annex_sizes, 
+                     color=group_color, linestyle=styles['annex_size'], 
+                     label=f'{group_name} - Git-Annex', linewidth=2)
+        
+        # Always plot total size
+        total_sizes = [monthly_data[month]['total_size'] for month in sorted_months]
+        plt.plot(dates, total_sizes, 
+                 color=group_color, linestyle=styles['total_size'], 
+                 label=f'{group_name} - Total', linewidth=2)
     
     # Format the plot
     plt.title(title, fontsize=16)
@@ -145,7 +189,7 @@ def create_plot(monthly_data, output_filename, title, use_log_scale):
     plt.ylabel('Size', fontsize=14)
     
     # Use log scale if requested
-    if use_log_scale and max(total_sizes) > 0:
+    if use_log_scale:
         plt.yscale('log')
     
     # Format the x-axis to show dates nicely
@@ -160,7 +204,7 @@ def create_plot(monthly_data, output_filename, title, use_log_scale):
     plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(size_formatter))
     
     plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend(fontsize=12)
+    plt.legend(fontsize=10, loc='best')
     plt.tight_layout()
     
     # Save the plot
@@ -173,20 +217,47 @@ def create_plot(monthly_data, output_filename, title, use_log_scale):
 def main():
     args = parse_args()
     
-    # Load all JSON files
-    all_data = load_json_files(args.input_pattern)
-    if not all_data:
-        print("No data found. Check the input pattern.")
-        return
+    # Process groups or single pattern
+    group_data = {}
     
-    # Aggregate data by month
-    monthly_data = aggregate_by_month(all_data)
-    if not monthly_data:
-        print("No valid data found in the JSON files.")
+    if args.group:
+        # Process each group
+        for group in args.group:
+            group_name = group[0]
+            group_patterns = group[1:]
+            
+            print(f"Processing group '{group_name}' with patterns: {group_patterns}")
+            
+            # Load JSON files for this group
+            group_json_data = load_json_files(group_patterns)
+            
+            if group_json_data:
+                # Aggregate data for this group
+                group_data[group_name] = aggregate_by_month(group_json_data)
+            else:
+                print(f"No data found for group '{group_name}'")
+    else:
+        # Process single pattern (no groups)
+        all_data = load_json_files(args.input_pattern)
+        if all_data:
+            group_data['All'] = aggregate_by_month(all_data)
+        else:
+            print("No data found. Check the input pattern.")
+            return
+    
+    # Check if we have any valid data
+    if not group_data:
+        print("No valid data found in any of the JSON files.")
         return
     
     # Create the plot
-    create_plot(monthly_data, args.output, args.title, args.log_scale)
+    create_plot(
+        group_data, 
+        args.output, 
+        args.title, 
+        args.log_scale, 
+        args.separate_components
+    )
 
 if __name__ == '__main__':
     main()
