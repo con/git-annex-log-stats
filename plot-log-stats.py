@@ -27,6 +27,10 @@ def parse_args():
     parser.add_argument('--log-scale', '-l', action='store_true', help='Use logarithmic scale for size axis')
     parser.add_argument('--separate-components', '-s', action='store_true', 
                         help='Show git and git-annex sizes separately (default: total only)')
+    parser.add_argument('--include-count', '-c', action='store_true',
+                        help='Include repository count in legend labels')
+    parser.add_argument('--plot-groups-total', '-p', action='store_true',
+                        help='Add a line showing the total across all groups')
     
     args = parser.parse_args()
     
@@ -39,6 +43,8 @@ def parse_args():
 def load_json_files(patterns):
     """Load all JSON files matching the patterns."""
     all_data = []
+    file_count = 0
+    
     # Handle single pattern or list of patterns
     if isinstance(patterns, str):
         patterns = [patterns]
@@ -49,10 +55,12 @@ def load_json_files(patterns):
                 with open(filename, 'r') as f:
                     data = json.load(f)
                     all_data.append(data)
+                    file_count += 1
                 print(f"Loaded {filename} with {len(data)} entries")
             except Exception as e:
                 print(f"Error loading {filename}: {e}")
-    return all_data
+    
+    return all_data, file_count
 
 def get_month_range(all_data):
     """Get the range of months from the earliest to the latest commit."""
@@ -130,7 +138,23 @@ def aggregate_by_month(all_data):
             monthly_totals[month]['total_size'] += last_values['total_size']
     return monthly_totals
 
-def create_plot(group_data, output_filename, title, use_log_scale, show_components):
+def calculate_groups_total(group_data):
+    """Calculate the total across all groups for each month."""
+    all_months = set()
+    for monthly_data in group_data.values():
+        all_months.update(monthly_data.keys())
+    
+    total_data = {month: {'git_size': 0, 'annex_size': 0, 'total_size': 0} for month in all_months}
+    
+    for group_name, monthly_data in group_data.items():
+        for month, sizes in monthly_data.items():
+            total_data[month]['git_size'] += sizes['git_size']
+            total_data[month]['annex_size'] += sizes['annex_size']
+            total_data[month]['total_size'] += sizes['total_size']
+    
+    return total_data
+
+def create_plot(group_data, repo_counts, output_filename, title, use_log_scale, show_components, include_count, plot_groups_total):
     """Create a plot of the monthly data with humanized size labels for multiple groups."""
     plt.figure(figsize=(12, 8))
     
@@ -153,6 +177,13 @@ def create_plot(group_data, output_filename, title, use_log_scale, show_componen
     # Keep track of all dates for x-axis
     all_dates = set()
     
+    # Calculate total across all groups if requested
+    if plot_groups_total and len(group_data) > 1:
+        total_data = calculate_groups_total(group_data)
+        # Add the total to the group data (it will be plotted last)
+        group_data['Total (All Groups)'] = total_data
+        repo_counts['Total (All Groups)'] = sum(repo_counts.values())
+    
     # Plot each group
     for group_idx, (group_name, monthly_data) in enumerate(group_data.items()):
         # Sort months chronologically
@@ -163,25 +194,37 @@ def create_plot(group_data, output_filename, title, use_log_scale, show_componen
         # Get the color for this group
         group_color = next(color_cycle)
         
+        # Create label with repository count if requested
+        if include_count:
+            base_label = f'{group_name} ({repo_counts[group_name]} repos)'
+        else:
+            base_label = group_name
+        
         # Plot the components based on user preference
         if show_components:
             # Extract and plot git size
             git_sizes = [monthly_data[month]['git_size'] for month in sorted_months]
             plt.plot(dates, git_sizes, 
                      color=group_color, linestyle=styles['git_size'], 
-                     label=f'{group_name} - Git', linewidth=2)
+                     label=f'{base_label} - Git', linewidth=2)
             
             # Extract and plot annex size
             annex_sizes = [monthly_data[month]['annex_size'] for month in sorted_months]
             plt.plot(dates, annex_sizes, 
                      color=group_color, linestyle=styles['annex_size'], 
-                     label=f'{group_name} - Git-Annex', linewidth=2)
-        
-        # Always plot total size
-        total_sizes = [monthly_data[month]['total_size'] for month in sorted_months]
-        plt.plot(dates, total_sizes, 
-                 color=group_color, linestyle=styles['total_size'], 
-                 label=f'{group_name} - Total', linewidth=2)
+                     label=f'{base_label} - Git-Annex', linewidth=2)
+            
+            # Extract and plot total size
+            total_sizes = [monthly_data[month]['total_size'] for month in sorted_months]
+            plt.plot(dates, total_sizes, 
+                     color=group_color, linestyle=styles['total_size'], 
+                     label=f'{base_label} - Total', linewidth=2)
+        else:
+            # Only plot total size
+            total_sizes = [monthly_data[month]['total_size'] for month in sorted_months]
+            plt.plot(dates, total_sizes, 
+                     color=group_color, linestyle=styles['total_size'], 
+                     label=base_label, linewidth=2)
     
     # Format the plot
     plt.title(title, fontsize=16)
@@ -219,6 +262,7 @@ def main():
     
     # Process groups or single pattern
     group_data = {}
+    repo_counts = {}
     
     if args.group:
         # Process each group
@@ -229,18 +273,20 @@ def main():
             print(f"Processing group '{group_name}' with patterns: {group_patterns}")
             
             # Load JSON files for this group
-            group_json_data = load_json_files(group_patterns)
+            group_json_data, file_count = load_json_files(group_patterns)
             
             if group_json_data:
                 # Aggregate data for this group
                 group_data[group_name] = aggregate_by_month(group_json_data)
+                repo_counts[group_name] = file_count
             else:
                 print(f"No data found for group '{group_name}'")
     else:
         # Process single pattern (no groups)
-        all_data = load_json_files(args.input_pattern)
+        all_data, file_count = load_json_files(args.input_pattern)
         if all_data:
             group_data['All'] = aggregate_by_month(all_data)
+            repo_counts['All'] = file_count
         else:
             print("No data found. Check the input pattern.")
             return
@@ -252,11 +298,14 @@ def main():
     
     # Create the plot
     create_plot(
-        group_data, 
+        group_data,
+        repo_counts,
         args.output, 
         args.title, 
         args.log_scale, 
-        args.separate_components
+        args.separate_components,
+        args.include_count,
+        args.plot_groups_total
     )
 
 if __name__ == '__main__':
