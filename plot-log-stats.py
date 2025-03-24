@@ -192,7 +192,12 @@ def create_plot(group_data, repo_counts, output_filename, title, use_log_scale, 
         all_dates.update(dates)
         
         # Get the color for this group
-        group_color = next(color_cycle)
+        if "All Groups" in group_name:
+            group_linewidth = 4 
+            group_color = '#A9A9A9'
+        else:
+            group_linewidth = 2
+            group_color = next(color_cycle)
         
         # Create label with repository count if requested
         if include_count:
@@ -224,7 +229,9 @@ def create_plot(group_data, repo_counts, output_filename, title, use_log_scale, 
             total_sizes = [monthly_data[month]['total_size'] for month in sorted_months]
             plt.plot(dates, total_sizes, 
                      color=group_color, linestyle=styles['total_size'], 
-                     label=base_label, linewidth=2)
+                     label=base_label, 
+                     linewidth=group_linewidth,
+                     )
     
     # Format the plot
     plt.title(title, fontsize=16)
