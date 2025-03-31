@@ -159,16 +159,39 @@ def aggregate_by_month(all_data):
     return monthly_totals
 
 def calculate_groups_total(group_data):
-    """Calculate the total across all groups for each month."""
+    """Calculate the total across all groups for each month, carrying forward the last known size."""
+    # Find all months across all groups
     all_months = set()
     for monthly_data in group_data.values():
         all_months.update(monthly_data.keys())
+    all_months = sorted(all_months)
+    
+    # Initialize total data structure
     total_data = {month: {'git_size': 0, 'annex_size': 0, 'total_size': 0} for month in all_months}
+    
+    # For each group, carry forward the last known size for each month
     for group_name, monthly_data in group_data.items():
-        for month, sizes in monthly_data.items():
-            total_data[month]['git_size'] += sizes['git_size']
-            total_data[month]['annex_size'] += sizes['annex_size']
-            total_data[month]['total_size'] += sizes['total_size']
+        # Get sorted months for this group
+        group_months = sorted(monthly_data.keys())
+        
+        # Track the last known sizes
+        last_known = {'git_size': 0, 'annex_size': 0, 'total_size': 0}
+        
+        # For each month in the full range
+        for month in all_months:
+            # If this month exists in the group data, update the last known size
+            if month in monthly_data:
+                last_known = {
+                    'git_size': monthly_data[month]['git_size'],
+                    'annex_size': monthly_data[month]['annex_size'],
+                    'total_size': monthly_data[month]['total_size']
+                }
+            
+            # Add the last known size to the total for this month
+            total_data[month]['git_size'] += last_known['git_size']
+            total_data[month]['annex_size'] += last_known['annex_size']
+            total_data[month]['total_size'] += last_known['total_size']
+    
     return total_data
 
 def create_plot(group_data, repo_counts, output_filename, title, use_log_scale, show_components, include_count, plot_groups_total, min_total_size):
