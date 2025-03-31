@@ -257,31 +257,43 @@ def create_plot(group_data, repo_counts, output_filename, title, use_log_scale, 
             group_linewidth = 2
             group_color = next(color_cycle)
         
-        # Create label with repository count if requested
+        # Get the latest total size for this group
+        latest_month = sorted(valid_months)[-1]
+        latest_total_size = monthly_data[latest_month]['total_size']
+        latest_total_size_str = humanize.naturalsize(latest_total_size, binary=True)
+        
+        # Create label with repository count and total size
+        label_parts = [group_name]
         if include_count:
-            base_label = f'{group_name} ({repo_counts[group_name]} repos)'
-        else:
-            base_label = group_name
+            label_parts.append(f"{repo_counts[group_name]} repos")
+        label_parts.append(f"total: {latest_total_size_str}")
+        base_label = f"{group_name} ({', '.join(label_parts[1:])})"
         
         # Plot the components based on user preference
         if show_components:
+            # Get latest component sizes
+            latest_git_size = monthly_data[latest_month]['git_size']
+            latest_annex_size = monthly_data[latest_month]['annex_size']
+            latest_git_size_str = humanize.naturalsize(latest_git_size, binary=True)
+            latest_annex_size_str = humanize.naturalsize(latest_annex_size, binary=True)
+            
             # Extract and plot git size
             git_sizes = [monthly_data[month]['git_size'] for month in valid_months]
             plt.plot(dates, git_sizes,
                      color=group_color, linestyle=styles['git_size'],
-                     label=f'{base_label} - Git', linewidth=2)
+                     label=f'{group_name} - Git ({latest_git_size_str})', linewidth=2)
             
             # Extract and plot annex size
             annex_sizes = [monthly_data[month]['annex_size'] for month in valid_months]
             plt.plot(dates, annex_sizes,
                      color=group_color, linestyle=styles['annex_size'],
-                     label=f'{base_label} - Git-Annex', linewidth=2)
+                     label=f'{group_name} - Git-Annex ({latest_annex_size_str})', linewidth=2)
             
             # Extract and plot total size
             total_sizes = [monthly_data[month]['total_size'] for month in valid_months]
             plt.plot(dates, total_sizes,
                      color=group_color, linestyle=styles['total_size'],
-                     label=f'{base_label} - Total', linewidth=2)
+                     label=f'{group_name} - Total ({latest_total_size_str})', linewidth=2)
         else:
             # Only plot total size
             total_sizes = [monthly_data[month]['total_size'] for month in valid_months]
@@ -323,7 +335,6 @@ def create_plot(group_data, repo_counts, output_filename, title, use_log_scale, 
     
     # Also display it if running in an interactive environment
     plt.show()
-
 def main():
     args = parse_args()
     
